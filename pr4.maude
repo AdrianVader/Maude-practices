@@ -1,0 +1,394 @@
+load model-checker.maude .
+load full-maude.maude .
+
+
+
+(mod TABLA is
+
+	pr CONFIGURATION .
+	pr STRING .
+	
+	*** Creamos los constructores de tabla y decimos que no importa el orden y que vacio es comodin (identidad).
+	sort Tabla .
+	op tablaVacia : -> Tabla [ctor] .
+	op __ : Tabla Tabla -> Tabla [ctor assoc comm id: tablaVacia] .
+	
+	*** Creamos una Tupla y decimos que es parte de una tabla, así podremos meter en la tabla (lista __) la clave y el valor.
+	sort Tupla .
+	subsort Tupla < Tabla .
+	op <_`,_> : String Oid -> Tupla [ctor] .
+
+	*** Función para insertar en una tabla una clave y un valor.
+	op inserta : Tabla Tupla -> Tabla .
+	var T : Tabla .
+	var C1 : String .
+	vars V1 V2 : Oid .
+	*** Si ya está en la tabla con algún valor se devuelve sobreescrito.
+	eq inserta(T < C1, V1 >, < C1, V2 >) = T < C1, V2 > .
+	*** En cualquier otro caso se concatena a la lista la clave y valor que se quiere insertar.
+	eq inserta(T, < C1, V2 >) = T < C1, V2 > [owise] .
+	
+	*** Función para eliminar un valor (mediante la clave) de la tabla.
+	op elimina : Tabla String -> Tabla .
+	*** Si encuentra la calve se devuelve el resto de la lista.
+	eq elimina(T < C1, V1 >, C1) = T .
+	*** En otro caso se devuelve la tabla igual.
+	eq elimina(T, C1) = T [owise] .
+
+endm)
+
+(mod LISTAMSG is
+
+	*** Para poder usa Msg.
+	pr CONFIGURATION .
+
+	sort ListaMsg .
+	
+	op listaVacia : -> ListaMsg [ctor] .
+	op `[_`] : Msg -> ListaMsg [ctor] .
+	op __ : ListaMsg ListaMsg -> ListaMsg [ctor assoc id: listaVacia] .
+
+endm)
+
+(mod CJTOSTRING is
+
+	pr STRING .
+	
+	sort CjtoString .
+	
+	op cjtoVacio : -> CjtoString [ctor] .
+	op `{_`} : String -> CjtoString [ctor] .
+	op __ : CjtoString CjtoString -> CjtoString [ctor assoc comm id: cjtoVacio] .
+
+endm)
+
+(omod PR4 is
+
+	*** Utilizamos la clase configuration (conjunto de objetos y mensajes) como tipo para los datos de la clase proceso.
+	pr CONFIGURATION .
+	
+	*** Lo vamos a utilizar para poner nombres más complejos ('P y n('P)) a los objetos (tienen que comenzar con ').
+	pr QID .
+	subsort Qid < Oid .
+	op n : Oid -> Oid [ctor] .
+
+	class Proceso | datos : Configuration .
+	
+	sort Estado .
+	ops inactivo esperando activo : -> Estado [ctor] .
+
+	*** Añadimos un String para el atributo recibido de Nodo.
+	pr STRING .
+	*** Añadimos un campo amigos que es de tipo CjtoString que contendrá las ip de algunos otros Nodos, por ello lo importamos.
+	pr CJTOSTRING .
+	class Nodo | ip : String, estado : Estado, recibido : String, amigos : CjtoString .
+
+	pr TABLA .
+	subclass Centro < Nodo .
+	class Centro | tabla : Tabla .
+	
+	subclass Extremo < Nodo .
+	class Extremo | centro : Oid .
+	
+	op null : -> Oid [ctor] .
+	
+	*** Costructor para la clase Extremo con el atributo centro a null.
+	var O : Oid .
+	var S : String .
+	op creaExtremo : Oid String -> Object .
+	eq creaExtremo(O, S) = < n(O) : Extremo | centro : null, ip : S, estado : inactivo, recibido : "" > .
+	
+	*** Clase Canal que conecta 2 procesos.
+	class Canal | origen : Oid, destino : Oid, listaOrigen : ListaMsg, listaDestino : ListaMsg, estado : EstadoCanal .
+	
+	pr LISTAMSG .
+	
+	*** Posibles estados de un canal.
+	sort EstadoCanal .
+	ops ok error : -> EstadoCanal [ctor] .
+	
+	msg info : String Oid -> Msg .
+	
+	*** Creamos un mensaje que se genera como respuesta de info, para que el extremo conozca su centro.
+	msg respuesta-info : Oid Oid -> Msg .
+
+	*** Mensaje con destinatario y cuerpo.
+	msg to_:_ : String String -> Msg .
+
+	*** Mensaje con un objeto destinatario y cuerpo.
+	msg to_:_ : Oid String -> Msg .
+	
+	var OProc : Oid .
+	rl [pasarAEsperando] :
+		< n(OProc) : Extremo | ip : S, estado : inactivo >
+	=>
+		< n(OProc) : Extremo | estado : esperando >
+		(info(S, n(OProc))) .
+
+	*** Cuando un mensaje info llega al centro, actualiza su tabla añadiendo el extremo y le envía un mensaje para que el extremo conozca el centro.
+	var T : Tabla .
+	var S' : String .
+	rl [actualizarTabla] : 
+		(info(S, O))
+		< n(OProc) : Centro | tabla : T, ip : S', estado : inactivo >
+	=>
+		< n(OProc) : Centro | tabla : T < S, O >, ip : S', estado : activo >
+		(respuesta-info(n(OProc), O)) .
+
+	*** Cuando el extremo recibe un mensaje de su centro se actualiza y se activa.
+	rl [recibirCentroYActivarse] :
+		< n(OProc) : Extremo | centro : null, ip : S, estado : esperando >
+		(respuesta-info(O, n(OProc)))
+	=>
+		< n(OProc) : Extremo | centro : O, estado : activo > .
+	
+
+	var OCanal : Oid .
+	var Cfg : Configuration .
+	var OidD : Oid .
+	var ListaMsgD : ListaMsg .
+	*** Esta regla Coge los mensajes de un proceso y si el destino coincide mete dicho mensaje en la lista de destino.
+	rl [introduceSalientes] :
+		< O : Proceso | datos : (to n(OidD) : S) Cfg >
+		< OCanal : Canal | destino : OidD, listaDestino : ListaMsgD, estado : ok >
+	=>
+		< O : Proceso | datos : Cfg >
+		< OCanal : Canal | listaDestino : ListaMsgD [to n(OidD) : S] > .
+
+	*** Esta regla Coge los mensajes de un proceso y si coincide con el origen, mete dicho mensaje en la lista de origen.
+	rl [introduceEntrantes] :
+		< O : Proceso | datos : (to n(OidD) : S) Cfg >
+		< OCanal : Canal | origen : OidD, listaOrigen : ListaMsgD, estado : ok >
+	=>
+		< O : Proceso | datos : Cfg >
+		< OCanal : Canal | listaOrigen : ListaMsgD [to n(OidD) : S] > .
+
+	*** Esta regla coge los mensajes de la sita de un canal y los introcude en los datos del proceso adecuado (al que van dirigidos).
+	rl [sacaDestino] :
+		< OidD : Proceso | datos : Cfg >
+		< OCanal : Canal | destino : n(OidD), listaDestino : [(to n(OidD) : S)] ListaMsgD, estado : ok >
+	=>
+		< OidD : Proceso | datos : (to n(OidD) : S) Cfg >
+		< OCanal : Canal | listaDestino : ListaMsgD > .
+
+	rl [sacaOrigen] :
+		< OidD : Proceso | datos : Cfg >
+		< OCanal : Canal | origen : n(OidD), listaOrigen : [(to n(OidD) : S)] ListaMsgD, estado : ok >
+	=>
+		< OidD : Proceso | datos : (to n(OidD) : S) Cfg >
+		< OCanal : Canal | listaOrigen : ListaMsgD > .
+
+	*** Esta regla marca un canal para que no pueda volverse a usar (irreparable).
+	rl [estropearCanal] : 
+		< OCanal : Canal | estado : ok > 
+	=> 
+		< OCanal : Canal | estado : error > .
+
+	var RestoAmigos : CjtoString .
+	*** Cuando un nodo tiene un amigo o más, le manda un mensaje "Hola" y lo borra de sulista de amigos.
+	rl [mandarHola] : 
+		< O : Nodo | amigos : {S} RestoAmigos > 
+	=> 
+		< O : Nodo | amigos : RestoAmigos >
+		(to S : "Hola") .
+
+	*** Esta regla se fija en los mensajes de cada proceso, y si puede traducir el string a un Oid cambia el mensaje.
+	rl [transformarMensajes] : 
+		< O : Proceso | datos : (to S : S') Cfg > 
+		< OProc : Centro | tabla : < S, n(O) > T > 
+	=> 
+		< O : Proceso | datos : (to n(O) : S') Cfg > 
+		< OProc : Centro | tabla : < S, n(O) > T >  .
+
+	*** Cuando un nodo recibe un mensaje lo concatena a los recibidos.
+	rl [concatenaMensaje] :
+		(to O : S') 
+		< O : Nodo | recibido : S > 
+	=> 
+		< O : Nodo | recibido : S + " " + S' > .
+
+	*** Dada una configuración cuenta el número de objetos.
+	pr NAT .
+	var M : Msg .
+	var Obj : Object .
+	op numObjetos : Configuration -> Nat .
+	eq numObjetos(M Cfg) = numObjetos(Cfg) .
+	eq numObjetos(Obj Cfg) = 1 + numObjetos(Cfg) .
+	eq numObjetos(none) = 0 [owise] .
+
+
+
+endom)
+
+(mod EJEMPLO is
+
+	*** vamos a probar el módulo PR4, concretamente una configuración determinada de nodos.
+	pr PR4 .
+	pr LISTAMSG .
+
+	op initial : -> Configuration .
+	eq initial =
+		< 'P0 : Proceso | datos : 
+			< n('P0) : Centro | tabla : tablaVacia, ip : "centro0", estado : inactivo, recibido : "", amigos : {"extremo1"} {"extremo2"} >
+		>
+		< 'P1 : Proceso | datos : 
+			< n('P5) : Centro | tabla : tablaVacia, ip : "centro5", estado : inactivo, recibido : "", amigos : {"extremo2"} {"extremo3"} >
+			< n('P1) : Extremo | centro : null, ip : "extremo1", estado : inactivo, recibido : "", amigos : {"extremo2"} {"extremo3"} >
+		>
+		< 'P2 : Proceso | datos : 
+			< n('P2) : Extremo | centro : null, ip : "extremo2", estado : inactivo, recibido : "", amigos : {"extremo1"} {"extremo3"} >
+		>
+		< 'P3 : Proceso | datos : 
+			< n('P3) : Extremo | centro : null, ip : "extremo3", estado : inactivo, recibido : "", amigos : {"extremo1"} {"extremo2"} >
+		>
+		< 'C1 : Canal | origen : 'P0, destino : 'P1, listaOrigen : listaVacia, listaDestino : listaVacia, estado : ok >
+		< 'C2 : Canal | origen : 'P0, destino : 'P2, listaOrigen : listaVacia, listaDestino : listaVacia, estado : ok >
+		< 'C3 : Canal | origen : 'P0, destino : 'P3, listaOrigen : listaVacia, listaDestino : listaVacia, estado : ok >
+		.
+
+endm)
+
+(mod PROPIEDADES is
+
+	*** Importamos este módulo para poder usar State.
+	pr SATISFACTION .
+	pr PR4 .
+	pr EJEMPLO .
+
+	subsort Configuration < State .
+
+	*** Dado un string devuelve true si existe un nodo con esa ip.
+	vars S S' S2 S2' : String .
+	vars Cfg Cfg' Cfg'' Cfg2 : Configuration .
+	vars O O' O'' O2 O2' O2'' : Oid .
+	vars E E2 : Estado .
+	vars Lo Ld : ListaMsg .
+	var Ec : EstadoCanal .
+	var Obj : Object .
+	vars Cjto Cjto2 : CjtoString .
+	vars T T2 : Tabla .
+
+	*** Dado un estado (Configuration) muestra true si existe un Extremo o Centro (Objetos que tienen las propiedades de Nodo) con la ip del String que le le pasa por parámetro.
+	op existeNodo : String -> Prop [ctor] .
+	eq < O : Proceso | datos : < O' : Extremo | ip : S, estado : E, recibido : S', amigos : Cjto, centro : O'' > Cfg > Cfg' |= existeNodo(S) = true .
+	eq < O : Proceso | datos : < O' : Centro | ip : S, estado : E, recibido : S', amigos : Cjto, tabla : T > Cfg > Cfg' |= existeNodo(S) = true .
+
+	*** Comprobar si algún Nodo tiene como amigo otro Nodo (por Oid).
+	op tengoAlgunAmigo : Oid -> Prop [ctor] .
+	eq 
+	< O' : Proceso | datos : < O : Extremo | ip : S, estado : E, recibido : S', amigos : Cjto, centro : O'' > Cfg > 
+	Cfg'' 
+	< O2' : Proceso | datos : < O2 : Extremo | ip : S2, estado : E2, recibido : S2', amigos : {S} Cjto2, centro : O2'' > Cfg2 > 
+	 Cfg' |= tengoAlgunAmigo(O) = true .
+
+	eq 
+	< O' : Proceso | datos : < O : Extremo | ip : S, estado : E, recibido : S', amigos : Cjto, centro : O'' > Cfg > 
+	Cfg'' 
+	< O2' : Proceso | datos : < O2 : Centro | ip : S2, estado : E2, recibido : S2', amigos : {S} Cjto2, tabla : T > Cfg2 > 
+	 Cfg' |= tengoAlgunAmigo(O) = true .
+
+	eq 
+	< O' : Proceso | datos : < O : Centro | ip : S, estado : E, recibido : S', amigos : Cjto, tabla : T > Cfg > 
+	Cfg'' 
+	< O2' : Proceso | datos : < O2 : Extremo | ip : S2, estado : E2, recibido : S2', amigos : {S} Cjto2, centro : O2'' > Cfg2 > 
+	 Cfg' |= tengoAlgunAmigo(O) = true .
+
+	eq 
+	< O' : Proceso | datos : < O : Centro | ip : S, estado : E, recibido : S', amigos : Cjto, tabla : T > Cfg > 
+	Cfg'' 
+	< O2' : Proceso | datos : < O2 : Centro | ip : S2, estado : E2, recibido : S2', amigos : {S} Cjto2, tabla : T2 > Cfg2 > 
+	 Cfg' |= tengoAlgunAmigo(O) = true .
+
+	*** TAMPOCO SÉ SI HAY QUE COMPROBAR OTROS TIPOS DE MENSAJE.
+	*** Comprobar si existe un mensaje para cierto Nodo (por ip)
+	op hayMensaje : String -> Prop [ctor] .
+	eq < O : Proceso | datos : (to S : S') Cfg > Cfg' |= hayMensaje(S) = true .
+
+	var N : Nat .
+	*** Comprobar que hay una cierta cantidad de Nodos.
+	op hayNNodos : Nat -> Prop [ctor] .
+	eq Cfg |= hayNNodos(N) = (cuentaNodos(Cfg) == N) .
+
+	op cuentaNodos : Configuration -> Nat .
+	eq cuentaNodos(< O : Proceso | datos : < O' : Extremo | ip : S, estado : E, recibido : S', amigos : Cjto, centro : O'' > Cfg > Cfg') = 1 + cuentaNodos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaNodos(< O : Proceso | datos : < O' : Centro | ip : S, estado : E, recibido : S', amigos : Cjto, tabla : T > Cfg > Cfg') = 1 + cuentaNodos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaNodos(< O : Canal | origen : O', destino : O'', listaOrigen : Lo, listaDestino : Ld, estado : Ec > Cfg) = 0 + cuentaNodos(Cfg) .
+	eq cuentaNodos(< O : Proceso | datos : (to S : S') Cfg > Cfg') = 0 + cuentaNodos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaNodos(< O : Proceso | datos : (info(S, O')) Cfg > Cfg') = 0 + cuentaNodos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaNodos(< O : Proceso | datos : (respuesta-info(O', O'')) Cfg > Cfg') = 0 + cuentaNodos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaNodos(< O : Proceso | datos : none > Cfg') = 0 + cuentaNodos(Cfg') .
+	eq cuentaNodos(none) = 0 .
+
+	*** Comprobar que hay una cierta cantidad de Extremos.
+	op hayNExtremos : Nat -> Prop [ctor] .
+	eq Cfg |= hayNExtremos(N) = (cuentaExtremos(Cfg) == N) .
+
+	op cuentaExtremos : Configuration -> Nat .
+	eq cuentaExtremos(< O : Proceso | datos : < O' : Extremo | ip : S, estado : E, recibido : S', amigos : Cjto, centro : O'' > Cfg > Cfg') = 1 + cuentaExtremos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaExtremos(< O : Proceso | datos : < O' : Centro | ip : S, estado : E, recibido : S', amigos : Cjto, tabla : T > Cfg > Cfg') = 0 + cuentaExtremos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaExtremos(< O : Canal | origen : O', destino : O'', listaOrigen : Lo, listaDestino : Ld, estado : Ec > Cfg) = 0 + cuentaExtremos(Cfg) .
+	eq cuentaExtremos(< O : Proceso | datos : (to S : S') Cfg > Cfg') = 0 + cuentaExtremos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaExtremos(< O : Proceso | datos : (info(S, O')) Cfg > Cfg') = 0 + cuentaExtremos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaExtremos(< O : Proceso | datos : (respuesta-info(O', O'')) Cfg > Cfg') = 0 + cuentaExtremos(< O : Proceso | datos : Cfg > Cfg') .
+	eq cuentaExtremos(< O : Proceso | datos : none > Cfg') = 0 + cuentaExtremos(Cfg') .
+	eq cuentaExtremos(none) = 0 .
+
+	*** Comprobar que un Canal (por Oid) funciona, su estado es ok.
+	op compruebaCanal : Oid -> Prop [ctor] .
+	eq < O : Canal | origen : O', destino : O'', listaOrigen : Lo, listaDestino : Ld, estado : ok > Cfg |= compruebaCanal(O) = true .
+
+
+
+endm)
+
+(mod CHECK is
+
+	pr PROPIEDADES .
+	sort Hola .
+	pr MODEL-CHECKER .
+	pr LTL-SIMPLIFIER .
+
+endm)
+
+
+***(frew initial .)*** Ejecuta las reglas y muestra un estado final al que ha llegado.
+
+***(red numObjetos(initial) .)*** Cuenta el número de procesos y canales (porque son los objetos del nivel en el que se ejecuta).
+
+***(search [1] initial =>* C:Configuration s.t. numObjetos(initial) =/= numObjetos(C:Configuration) .)*** Encuentra la primera solución que consigue que el número de objetos iniciales sea diferente al número de objetos en otro estado.
+
+***(red existeNodo(initial, initStr) .)
+
+***(red modelCheck(initial, existeNodo("centro0")) .)
+***(red modelCheck(initial, existeNodo("extremo1")) .)
+***(red modelCheck(initial, existeNodo("extremo10")) .)
+***(red modelCheck(initial, tengoAlgunAmigo(n('P1))) .)
+***(red modelCheck(initial, <> hayMensaje("extremo1")) .)
+***(red modelCheck(initial, hayNNodos(5)) .)
+***(red cuentaNodos(initial) .)
+***(red modelCheck(initial, hayNExtremos(3)) .)
+***(red cuentaExtremos(initial) .)
+***(red modelCheck(initial, <> compruebaCanal('C1)) .)
+
+
+
+*** A continuación comprobamos cuántos Nodos hay en el estado inicial. Luego comprobamos que los Nodos del estado inicial coinciden con los que devuelve la función que cuenta Nodos en el estado iicial. A continuación, comprobamos que siempre hay 5 Nodos (contados a mano) desde la configuración inicial. Finalmente, y el único caso válido para el ejercicio 24.1 pedido comprobamos que siempre el número de nodos es el mismo que en el estado inicial. Tiene sentido que devuelva true, ya que en ningún momento se crean Nodos extra a la configuración inicial.
+***(red cuentaNodos(initial) .)
+***(red modelCheck(initial, hayNNodos( cuentaNodos(initial) )) .)
+***(red modelCheck(initial, [] hayNNodos( 5 )) .)
+***(red modelCheck(initial, [] hayNNodos( cuentaNodos(initial) )) .)
+
+
+
+*** Comprueba que si existe un Nodo y algún otro Nodo lo tiene como amigo, entonces en algún momento le enviarán un mensaje. Tiene sentido que devuelva true, ya que existe una regla en la que se borra de la lista un amigo y se le manda un mensaje.
+*** La siguiente propiedad de lógica temporal se lee: Siempre que en algún momento existe un Nodo y este alguna vez le tienen como Amigo, entonces (o hasta el momento que...) siempre se cumple que en algún momento le llegará algún mensaje.
+***(red modelCheck(initial, [] ( <> existeNodo("extremo1") /\ <> tengoAlgunAmigo(n('P1)) ) -> [] <> hayMensaje("extremo1") ) .) *** CREO QUE HACE FALTA METER EL OPERADOR "U" O "R".
+***(red modelCheck(initial, [] ( <> existeNodo("extremo1") /\ <> tengoAlgunAmigo(n('P1)) ) U [] <> hayMensaje("extremo1") ) .)
+
+
+
+*** Comprobar que cualquier mensaje acaba desapereciendo. NO ESTOY SEGURO DE LO QUE HAY QUE COMPROBAR, YA QUE LOS MENSAJES DE RECIBEN Y SE METEN EN LAS LISTAS DE LOS CANALES.
+***(red modelCheck(initial,  [] <> hayMensaje("extremo1") -> hayMensaje("extremo1") == false ) .) *** HACE FALTA METER EL OPERADOR "U" O "R".
+***(red modelCheck(initial,  [] <> hayMensaje("extremo1") U [] <> hayMensaje("extremo1") ) .) *** NO SÉ CÓMO SE PONE EL NOT!!!!!!!!!!!
+
+

@@ -1,0 +1,390 @@
+*** Esta páctica por parejas está desarrollada por: Adrián Rabadán Jurado y Teresa Rodríguez Ferreira.
+
+*** Para ejecutar la práctica escribir: load pr5.maude dentro de Maude, los módulos del model checker y full maude se cargan directamente dentro del archivo.
+
+load model-checker.maude .
+load full-maude.maude .
+
+*** Se utilizarán reglas para todos aquellos cambios que representan un estado que se quiere evaluar con propiedades. Se usarán equaciones en el resto de casos.
+
+
+
+
+
+
+(fmod BOLSA is
+
+*** Importamos los naturales para poder medir las cantidades de alcohol, refresco y hielos, ya que se miden en unidades.
+	sort Bolsa .
+	pr NAT . 
+
+*** Este constructor sirve para las personas que no llevan bolsa.
+	op sinBolsa : -> Bolsa [ctor] .
+*** Este constructor sirve para fijar la cantidad de alcohol, refresco y hielo en la bolsa, en ese orden concreto.
+	op `[_`,_`,_`] : Nat Nat Nat -> Bolsa [ctor] .
+
+endfm)
+
+
+
+
+
+
+(omod PERSONA is
+
+*** Importamos las cadenas para usarlo como tipo para el nombre. También lo podemos usar para indicar si es vip o noVip
+	pr STRING .
+
+*** Importamos los naturales para utilizarlos como tipo para la edad.
+	pr NAT .
+
+*** Utilizaremos también el tipo bolsa para que las personas la lleven y usen.
+	pr BOLSA .
+
+*** Vamos a crear el tipo persona.	
+	class Persona | nombre : String, edad : Nat, bolsa : Bolsa, vip : String, copas : Nat .
+
+endom)
+
+
+
+
+
+
+(fmod COLAPERSONAS is
+
+	pr PERSONA .
+
+	sort ColaPersonas .
+    subsort Object < ColaPersonas .
+
+	op colaVacia : -> ColaPersonas [ctor] .
+	op _ : Persona -> ColaPersonas [ctor] .
+	op _;_ : ColaPersonas ColaPersonas -> ColaPersonas [ctor assoc id: colaVacia] .
+
+endfm)
+
+
+
+
+
+
+(omod SABADONOCHE is
+
+*** Importamos la configuration para poder utilizar grupos de Personas. 
+	pr CONFIGURATION .
+
+*** Importamos la Cola de Personas para que esperen a entrar en el local. Esto también incluye a las Personas y la bolsa.
+	pr COLAPERSONAS .
+
+*** Importamos Qid para usarlo como subsort de Oid y utilizarlo al nombrar a los objetos personas.
+	pr QID .
+	subsort Qid < Oid .
+
+	
+
+*******class SabadoNoche | botellon : Configuration, local : Local, colaVip : ColaPersonas, colaNoVip : ColaPersonas .
+
+	
+********************************* Se puede simplificar la ColaNoVip y la ColaVip en Cola, que tenga un atributo que las diferencie.
+*** Clases que se van a utilizar
+	class Botellon | gente : Configuration .
+	class Local | gente : Configuration, aforo : Nat, alcohol : Nat, refrescos : Nat .
+	class ColaNoVip | gente : ColaPersonas .
+	class ColaVip | gente : ColaPersonas .
+
+
+*** Declaramos variables para nombrar los objetos.
+	vars O O' OBotellon OCola OLocal : Oid .
+	vars A R H A' R' H' Edad Copas Aforo NumP : Nat .
+	var Cfg Cfg' CfgLocal  : Configuration .
+	vars CVip CNoVip : ColaPersonas .
+	var B : Bolsa .
+
+*******************************************************************************
+*******************************************************************************
+*******************************************************************************
+*******************************************************************************
+
+
+*** Regla que permite beber un refresco utilizando un hielo propio.
+	crl [bebeRefrescoEnBotellon] :
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [A, R, H] >
+			Cfg 
+		>
+	=>
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [A, sd(R, 1), sd(H, 1)] >
+			Cfg
+		>
+	if R > 0 /\ H > 0 .
+
+*** Regla que permite beber un refresco utilizando un hielo prastado.
+	crl [bebeRefrescoYPideHieloEnBotellon] :
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [A, R, 0] >
+			< O' : Persona | bolsa : [A', R', H'] >
+			Cfg
+		>
+	=>
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [A, sd(R, 1), 0] >
+			< O' : Persona | bolsa : [A', R', sd(H', 1)] >
+			Cfg
+		>
+	if R > 0 /\ H' > 0 .
+
+*** Regla que permite beber un cubata utilizando un hielo propio.
+	crl [bebeCubataEnBotellon] :
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [A, R, H], copas : Copas >
+			Cfg
+		>
+	=>
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [sd(A, 1), sd(R, 1), sd(H, 1)], copas : Copas + 1 >
+			Cfg
+		>
+	if A > 0 /\ R > 0 /\ H > 0 .
+
+*** Regla que permite beber un cubata utilizando un hielo prestado.
+	crl [bebeCubataYPideHieloEnBotellon] :
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [A, R, 0], copas : Copas >
+			< O' : Persona | bolsa : [A', R', H'] >
+			Cfg
+		>
+	=>
+		< OBotellon : Botellon | gente : 
+			< O : Persona | bolsa : [sd(A, 1), sd(R, 1), 0], copas : Copas + 1 >
+			< O' : Persona | bolsa : [A', R', sd(H', 1)] >
+			Cfg
+		>
+	if A > 0 /\ R > 0 /\ H' > 0 .
+
+*** Regla que permite que una persona se ponga en la cola vip del local
+*** TODO habría que hacer otra regla para el caso de que la cola esté vacía?
+*** TODO Creo que no.
+	rl [ponerseEnColaVip] :
+		***< O : SabadoNoche | botellon : < O' : Persona | vip : "vip" > Cfg, colaVip : CVip >
+		< OBotellon : Botellon | gente : < O : Persona | vip : "vip" > Cfg >
+		< OCola : ColaVip | gente : CVip >
+	=>
+		***< O : SabadoNoche | botellon : Cfg, colaVip : (CVip ; < O' : Persona | vip : "vip" >) > .
+		< OBotellon : Botellon | gente : Cfg >
+		< OCola : ColaVip | gente : (CVip ; < O : Persona | vip : "vip" >) > .
+
+*** Regla que permite que una persona se ponga en la cola no vip del local
+*** TODO habría que hacer otra regla para el caso de que la cola esté vacía?
+*** TODO Creo que no.
+	rl [ponerseEnColaNoVip] :
+		***< O : SabadoNoche | botellon : < O' : Persona | vip : "noVip" > Cfg, colaNoVip : CNoVip >
+		< OBotellon : Botellon | gente : < O' : Persona | vip : "noVip" > Cfg >
+		< OCola : ColaNoVip | gente : CNoVip >
+	=>
+		***< O : SabadoNoche | botellon : Cfg, colaNoVip : (CNoVip ; < O' : Persona | vip : "noVip" >) > .
+		< OBotellon : Botellon | gente : Cfg >
+		< OCola : ColaNoVip | gente : (CNoVip ; < O' : Persona | vip : "noVip" >) > .
+
+*** Regla que permite que una persona vip pase de la cola vip al local si cumple las condiciones
+	crl [entrarAlLocalVip] :
+		***< O: SabadoNoche | botellon : < O : Persona | edad : Edad, copas : Copas > Cfg, local : < O : Local | gente : Cfg', aforo : Aforo, numPersonas : NumP >, colaVip : CVip >
+		< OCola : ColaVip | gente : (< O : Persona | edad : Edad, bolsa : B, copas : Copas > ; CVip) >
+		< OLocal : Local | gente : CfgLocal, aforo : Aforo >
+		=>
+		***< O: SabadoNoche | botellon : Cfg, local : < O : Local | gente : Cfg', aforo : Aforo, numPersonas : NumP + 1 >, colaVip : CVip >
+		< OCola : ColaVip | gente : CVip >
+		< OLocal : Local | gente : < O : Persona | edad : Edad, bolsa : sinBolsa, copas : Copas > CfgLocal, aforo : Aforo >
+		if Edad >= 18 /\ cuentaPersonas(CfgLocal) < Aforo /\ Copas < 3 .
+
+*** Regla que echa a la persona vip de vuelta al botellón si no cumple las condiciones
+	crl [echarDeLaColaVipAlBotellon] :
+		< OBotellon : Botellon | gente : Cfg >
+		< OCola : ColaVip | gente : (< O : Persona | edad : Edad, bolsa : B, copas : Copas > ; CVip) >
+		< OLocal : Local | gente : CfgLocal, aforo : Aforo >
+		=>
+		< OBotellon : Botellon | gente : < O : Persona | edad : Edad, bolsa : B, copas : Copas > Cfg >
+		< O : ColaVip | gente : CVip >
+		< OLocal : Local | gente : CfgLocal, aforo : Aforo >
+		if Edad < 18 or Copas >= 3 .
+
+*** Regla que permite que una persona vip pase de la cola vip al local si cumple las condiciones
+	crl [entrarAlLocalNoVip] :
+		< OCola : ColaNoVip | gente : (< O : Persona | edad : Edad, bolsa : B, copas : Copas > ; CNoVip) >
+		< OLocal : Local | gente : CfgLocal, aforo : Aforo >
+		=>
+		< OCola : ColaNoVip | gente : CNoVip >
+		< OLocal : Local | gente : < O : Persona | edad : Edad, bolsa : sinBolsa, copas : Copas > CfgLocal, aforo : Aforo >
+		if Edad >= 18 /\ NumP < Aforo /\ Copas < 3 .
+
+*** Regla que echa a la persona vip de vuelta al botellón si no cumple las condiciones
+	crl [echarDeLaColaNoVipAlBotellon] :
+		< OBotellon : Botellon | gente : Cfg >
+		< OCola : ColaNoVip | gente : (< O : Persona | edad : Edad, bolsa : B, copas : Copas > ; CNoVip) >
+		< OLocal : Local | gente : CfgLocal, aforo : Aforo >
+		=>
+		< OBotellon : Botellon | gente : < O : Persona | edad : Edad, bolsa : B, copas : Copas > Cfg >
+		< OCola : ColaNoVip | gente : CNoVip >
+		< OLocal : Local | gente : CfgLocal, aforo : Aforo >
+		if Edad < 18 or Copas >= 3 .
+
+*** Regla que permite tomar un refresco dentro del local
+	crl [beberRefrescoEnLocal] :
+		< OLocal : Local | gente : < O : Persona | > CfgLocal, refrescos : R >
+		=>
+		< OLocal : Local | gente : < O : Persona | > CfgLocal, refrescos : sd(R, 1) >
+		if R > 0 .
+
+*** Regla que permite tomar una copa dentro del local
+	crl [beberCopaEnLocal] :
+		< OLocal : Local | gente : < O : Persona | nombre : Nombre, copas : Copas > CfgLocal, alcohol : A, refrescos : R >
+		=>
+		< OLocal : Local | gente : < O : Persona | nombre : Nombre, copas : Copas + 1 > CfgLocal, alcohol : sd(A, 1), refrescos : sd(R, 1) >
+		if A > 0 /\ R > 0 /\ Copas < 4 /\ Nombre =/= "Dabi" .
+
+*** Regla que hace que Dabi eche a alguien del local si ha bebido 4 copas o más
+	crl [dabiTeEcha] :
+		< OLocal : Local | gente : < O : Persona | nombre : Nombre, copas : Copas > CfgLocal >
+		=>
+		< OLocal : Local | gente : CfgLocal >
+		if Copas == 4 .
+
+*** Regla que permite irse del local
+	crl [irse] :
+		< OLocal : Local | gente : < O : Persona | nombre : Nombre > CfgLocal >
+		=>
+		< OLocal : Local | gente : CfgLocal > 
+		if Nombre =/= "Dabi" .
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	var Nombre : String .
+	op cuentaPersonas : Configuration -> Nat .
+	eq cuentaPersonas(< O : Persona | nombre : Nombre > Cfg) = 1 + cuentaPersonas(Cfg).
+	eq cuentaPersonas(Cfg) = 0 .
+
+endom)
+
+(mod EJEMPLO is
+
+	pr SABADONOCHE .
+	
+	op init :  -> Configuration .
+	eq init = 
+		< 'OBotellon : Botellon | 
+			gente : 
+				< 'OP4 : Persona | nombre : "Paloma", edad : 27, bolsa : [2,1,1], vip : "noVip", copas : 1 > 
+				< 'OP5 : Persona | nombre : "Gorka", edad : 33, bolsa : [1,1,0], vip : "noVip", copas : 3 > 
+		>
+		< 'OLocal : Local | 
+			gente : 
+				< 'OP0 : Persona | nombre : "Dabi", edad : 23, bolsa : sinBolsa, vip : "vip", copas : 0 >, 
+			aforo : 4, 
+			alcohol : 6, 
+			refrescos : 5 
+		>
+		< 'OColaNoVip : ColaNoVip | 
+			gente : 
+				< 'OP3 : Persona | nombre : "Menor", edad : 17, bolsa : [1,1,2], vip : "noVip", copas : 1 > 
+		>
+		< 'OColaVip : ColaVip | 
+			gente : 
+				< 'OP1 : Persona | nombre : "Adri", edad : 24, bolsa : [0,1,1], vip : "vip", copas : 0 > ; 
+				< 'OP2 : Persona | nombre : "Teresa", edad : 23, bolsa : [1,1,0], vip : "vip", copas : 0 > 
+		>
+		.
+
+endm)
+
+(mod PROPIEDADES is
+
+	*** Importamos este módulo para poder usar State.
+	pr SATISFACTION .
+	pr EJEMPLO .
+
+	subsort Configuration < State .
+	
+	
+
+endm)
+
+(mod CHECK is
+
+	pr PROPIEDADES .
+	pr MODEL-CHECKER .
+	pr LTL-SIMPLIFIER .
+	sort Hola .
+
+endm)
+
+
+
+
+
+
+***(
+	crl [entrarAlLocalNoVip] :
+		< OColaVip : ColaVip | gente : CVip >
+		< OColaNoVip : ColaNoVip | gente : 
+			< O : Persona | edad : Edad,  copas : Copas , bolsa : Bolsa > ; 
+			CNoVip 
+		>
+		< OLocal : Local | gente : 
+			Cfg ,
+		aforo : Aforo 
+		>
+	=>
+		< OColaVip : ColaVip | gente : CVip >
+		< OColaNoVip : ColaNoVip | gente : 
+			CNoVip 
+		>
+		< OLocal : Local | gente : 
+			< O : Persona | edad : Edad,  copas : Copas , bolsa : sinBolsa > 
+			Cfg 
+		>
+	if Edad >= 18 /\ Copas < 3 /\ Aforo > cuentaPersonas(Cfg) .
+***)
+
+***(
+	var Cfg' : Configuration .
+	crl [irseDeLaColaAlBotellonNoVip] :
+		< OColaVip : ColaVip | gente : CVip >
+		< OColaNoVip : ColaNoVip | gente : 
+			< O : Persona | edad : Edad,  copas : Copas > ; 
+			CNoVip 
+		>
+		< OBotellon : Botellon | gente : 
+			Cfg' 
+		>
+	=>
+		< OColaVip : ColaVip | gente : CVip >
+		< OColaNoVip : ColaNoVip | gente : 
+			CNoVip 
+		>
+		< OBotellon : Botellon | gente : 
+			< O : Persona | edad : Edad,  copas : Copas > 
+			Cfg'
+		>
+	if Edad < 18 \/ Copas >= 3 /\ Aforo > cuentaPersonas(Cfg) .
+***)
+
+
+
+
+
